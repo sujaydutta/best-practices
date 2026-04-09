@@ -8,3 +8,4 @@ This repo contains some of the best practices tech development.
 - [Java Best Practices](Java-Best-Practices.md)
 - [.NET C# Best Practices](NET-C#-Best-Practices.md)
 - [Observability Best Practices](Observability-Best-Practices.md)
+- [Azure Highly Scalable Workload Best Practices.md](Azure-Highly-Scalable-Workloads-Best Practices.md)
