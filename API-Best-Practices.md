@@ -149,3 +149,5 @@ The **OpenAPI Specification (OAS)** is the industry-standard, machine-readable f
 Treat your API like a **product** — and your OpenAPI specification as its **contract**. The best APIs (and their specs) feel invisible: developers love using them because they just work. By targeting the latest OpenAPI standard and following these practices, your APIs will be robust, secure, well-documented, and future-proof for years to come. 
 
 Start with design-first + OpenAPI 3.2, and you'll thank yourself later.
+
+[Latest Open API Spec](https://spec.openapis.org/oas/latest.html)
