@@ -1,5 +1,4 @@
 # Feature Flagging Best Practices
-**Staff Architect Reference Guide · v1.0**
 
 > *Java · .NET · Python · Angular · React*
 
