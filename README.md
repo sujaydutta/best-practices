@@ -21,3 +21,4 @@ This repo contains some of the best practices tech development.
 - [Azure APIM Best Practices](Azure_APIM_Best_Practices.md)
 - [AWS API Gateway Best Practices](AWS_API_Gateway_Best_Practices.md)
 - [APISIX Best Practices](APISIX_Best_Practices.md)
+- [Spec Driven Development Best Practices](Spec-Driven-Dev-Best-Practices.md)
