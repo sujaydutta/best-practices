@@ -18,3 +18,6 @@ This repo contains some of the best practices tech development.
 - [Databricks Best Practices](Databricks_Best_Practices.md)
 - [S3 Best Practices](S3_Best_Practices.md)
 - [Agentic Apps Best Practices](Agentic_Apps_Best_Practices.md)
+- [Azure APIM Best Practices](Azure_APIM_Best_Practices.md)
+- [AWS API Gateway Best Practices](AWS_API_Gateway_Best_Practices.md)
+- [APISIX Best Practices](APISIX_Best_Practices.md)
