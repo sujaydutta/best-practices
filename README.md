@@ -10,3 +10,4 @@ This repo contains some of the best practices tech development.
 - [Observability Best Practices](Observability-Best-Practices.md)
 - [Azure Highly Scalable Workload Best Practices](Azure-Highly-Scalable-Workloads-Best-Practices.md)
 - [Feature Flagging Best Practices](Feature-Flagging-Best-Practices.md)
+- [Azure SQL Best Practices](Azure-SQL-Best-Practices.md)

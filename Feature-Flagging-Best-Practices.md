@@ -1,6 +1,6 @@
 # Feature Flagging Best Practices
 
-> *Java · .NET · Python · Angular · React*
+> *Java · .NET · Python · Angular · React · Flipt · flagd · OpenFeature*
 
 ---
 
@@ -14,9 +14,10 @@
 6. [Python](#6-python)
 7. [Angular](#7-angular)
 8. [React](#8-react)
-9. [Operational & Security Guidance](#9-operational--security-guidance)
-10. [Governance & Team Standards](#10-governance--team-standards)
-11. [Quick Reference](#11-quick-reference)
+9. [Open Source Self-Hosted Tools](#9-open-source-self-hosted-tools)
+10. [Operational & Security Guidance](#10-operational--security-guidance)
+11. [Governance & Team Standards](#11-governance--team-standards)
+12. [Quick Reference](#12-quick-reference)
 
 ---
 
@@ -62,7 +63,7 @@ Never scatter flag definitions in config files, environment variables, or code c
 - Audit log of who changed what and when
 - Targeting rules, percentage rollouts, and user segmentation in one place
 
-> **✅ RECOMMENDED:** Evaluate LaunchDarkly, Unleash (self-hosted), Flagsmith, or OpenFeature-compatible providers. For greenfield projects, OpenFeature's vendor-neutral SDK standard should be the default choice.
+> **✅ RECOMMENDED:** Evaluate LaunchDarkly, Unleash (self-hosted), Flagsmith, Flipt, or flagd for open-source/self-hosted deployments. For greenfield projects, OpenFeature's vendor-neutral SDK standard should be the default choice — it lets you swap providers without rewriting application code. See [Section 9](#9-open-source-self-hosted-tools) for a deep dive on Flipt and flagd.
 
 ### 2.2 The Flag Evaluation Contract
 
@@ -468,9 +469,256 @@ test('shows new checkout when flag enabled', () => {
 
 ---
 
-## 9. Operational & Security Guidance
+---
 
-### 9.1 Environment Promotion Strategy
+## 9. Open Source Self-Hosted Tools
+
+For teams that require full data sovereignty, no per-seat licensing, or GitOps-native flag management, open source self-hosted tools are a strong alternative to SaaS platforms. The two most architecturally significant options are **Flipt** and **flagd**.
+
+### 9.1 Flipt
+
+<https://flipt.io> · License: GPL-3.0 · Language: Go (single binary)
+
+Flipt is a 100% open source, self-hosted feature flag platform with zero paid tiers. It is built as a single Go binary with no required external dependencies, making it the simplest option to operate. Flipt natively supports a **GitOps workflow** — flag definitions can be stored and versioned in Git repositories alongside application code, with changes flowing automatically into running instances.
+
+**Strengths:**
+- Single binary deployment — runs on bare metal, VMs, containers, or Kubernetes
+- No seat limits, no paywalled features, no cloud dependency
+- Git-native flag storage: flags live in YAML/JSON in your repo, fully auditable via `git log`
+- Full OpenFeature provider support across Java, .NET, Python, Node.js, Go, Ruby, and browser JS
+- SSO, SAML, and RBAC available for enterprise self-hosted deployments
+- Local (in-process) flag evaluation — flags keep working even if the Flipt server is unreachable
+
+**Trade-offs:**
+- No built-in experimentation or A/B testing analytics — requires a separate data pipeline
+- Smaller contributor base than Unleash or Flagsmith; features iterate more slowly
+- Community support only (no paid SLA tier)
+
+**Deployment:**
+
+```bash
+# Docker — single container, no external DB needed by default
+docker run -d -p 8080:8080 -p 9000:9000 \
+  -v $(pwd)/config:/etc/flipt \
+  docker.flipt.io/flipt/flipt:latest
+
+# Kubernetes via Helm
+helm repo add flipt https://helm.flipt.io
+helm install flipt flipt/flipt --namespace feature-flags --create-namespace
+```
+
+**GitOps flag definition (YAML in repo):**
+
+```yaml
+# flags.yaml — committed to your application repo
+flags:
+  - key: new-checkout-engine
+    name: New Checkout Engine
+    type: BOOLEAN_FLAG_TYPE
+    enabled: true
+    rules:
+      - segment: beta-users
+        rank: 1
+  - key: dark-mode-ui
+    name: Dark Mode UI
+    type: BOOLEAN_FLAG_TYPE
+    enabled: false
+```
+
+**Java integration via OpenFeature + Flipt provider:**
+
+```java
+// Add dependency: io.flipt:flipt-openfeature-provider-java
+FliptProvider provider = new FliptProvider(
+    FliptProviderConfig.builder()
+        .host("http://flipt.internal:9000")
+        .build()
+);
+OpenFeatureAPI.getInstance().setProvider(provider);
+Client client = OpenFeatureAPI.getInstance().getClient();
+
+MutableContext ctx = new MutableContext();
+ctx.add("userId", user.getId());
+ctx.add("email", user.getEmail());
+
+boolean enabled = client.getBooleanValue("new-checkout-engine", false, ctx);
+```
+
+**Python integration via OpenFeature + Flipt provider:**
+
+```python
+from openfeature import api
+from openfeature.contrib.provider.flipt import FliptProvider
+
+api.set_provider(FliptProvider(address="http://flipt.internal:9000"))
+client = api.get_client()
+
+ctx = EvaluationContext(targeting_key=user_id, attributes={"email": email})
+enabled = client.get_boolean_value("new-checkout-engine", False, ctx)
+```
+
+---
+
+### 9.2 flagd
+
+<https://flagd.dev> · License: Apache-2.0 · CNCF Project · Language: Go
+
+flagd is the **official OpenFeature reference implementation** — a lightweight feature flag evaluation daemon following the Unix philosophy: do one thing well. It has no UI, no management console, and no built-in persistence layer. Instead, it reads flag definitions from one or more configurable **sync sources** (local files, HTTP endpoints, Kubernetes CRDs, or gRPC streams) and exposes evaluation over gRPC and HTTP.
+
+This minimalism is its greatest strength: flagd slots into any existing infrastructure without dictating how you store or manage flags.
+
+**Strengths:**
+- Official OpenFeature reference implementation — highest spec compliance
+- Multiple sync sources: local file, HTTP, Kubernetes custom resource, gRPC
+- Three deployment modes: standalone service, Kubernetes sidecar (via OpenFeature Operator), or in-process evaluation engine embedded directly in the app
+- Hot-reloads flag definitions — changes take effect immediately without restart
+- Built-in Prometheus metrics on port `8014` and native OpenTelemetry support
+- Zero vendor lock-in: pure OpenFeature API in application code
+
+**Trade-offs:**
+- No built-in UI or management console — you manage flag JSON/YAML files directly or pair with a UI layer
+- No built-in targeting UI: targeting rules are written as JSON Logic expressions
+- Requires operational maturity to manage flag files at scale without a dedicated management layer
+
+**Deployment modes:**
+
+```
+Mode 1 — Standalone service (all languages call it over gRPC/HTTP)
+  [App] ──gRPC──► [flagd process] ──reads──► [flags.json | HTTP | K8s CRD]
+
+Mode 2 — Kubernetes sidecar (injected automatically by OpenFeature Operator)
+  Pod: [App container] ──localhost:8013──► [flagd sidecar] ──► [FeatureFlag CRD]
+
+Mode 3 — In-process (flagd evaluation engine embedded; no separate process)
+  [App] ──► [flagd-core library] ──reads──► [local flags.json]
+```
+
+**Kubernetes deployment with OpenFeature Operator:**
+
+```yaml
+# FeatureFlag CRD — flag definitions as Kubernetes resources
+apiVersion: core.openfeature.dev/v1beta1
+kind: FeatureFlag
+metadata:
+  name: app-flags
+spec:
+  flagSpec:
+    flags:
+      new-checkout-engine:
+        state: ENABLED
+        variants:
+          "true": true
+          "false": false
+        defaultVariant: "false"
+        targeting:
+          if:
+            - in: ["@beta.example.com", { var: email }]
+            - "true"
+            - "false"
+---
+# Annotate your Deployment — flagd sidecar is injected automatically
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-service
+  annotations:
+    openfeature.dev/enabled: "true"
+    openfeature.dev/featureflagsource: "app-flags"
+```
+
+**Flag definition format (JSON Logic targeting rules):**
+
+```json
+{
+  "flags": {
+    "new-checkout-engine": {
+      "state": "ENABLED",
+      "variants": { "true": true, "false": false },
+      "defaultVariant": "false",
+      "targeting": {
+        "if": [
+          { "in": ["@beta.example.com", { "var": "email" }] },
+          "true",
+          "false"
+        ]
+      }
+    }
+  }
+}
+```
+
+**Java integration (OpenFeature + flagd provider):**
+
+```java
+// flagd runs as a sidecar — connect to localhost
+FlagdProvider provider = new FlagdProvider(
+    FlagdOptions.builder()
+        .host("localhost")
+        .port(8013)
+        .build()
+);
+OpenFeatureAPI.getInstance().setProvider(provider);
+Client client = OpenFeatureAPI.getInstance().getClient();
+
+MutableContext ctx = new MutableContext(user.getId());
+ctx.add("email", user.getEmail());
+
+boolean enabled = client.getBooleanValue("new-checkout-engine", false, ctx);
+```
+
+**.NET integration (OpenFeature + flagd provider):**
+
+```csharp
+// NuGet: OpenFeature.Contrib.Providers.Flagd
+var provider = new FlagdProvider(new Uri("http://localhost:8013"));
+await OpenFeature.Api.Instance.SetProviderAsync(provider);
+var client = OpenFeature.Api.Instance.GetClient();
+
+var ctx = EvaluationContext.Builder()
+    .SetTargetingKey(userId)
+    .Set("email", userEmail)
+    .Build();
+
+bool enabled = await client.GetBooleanValueAsync("new-checkout-engine", false, ctx);
+```
+
+**Angular / React integration (flagd web provider):**
+
+```typescript
+// flagd-web-provider connects to flagd's HTTP evaluation endpoint
+// Run flagd with --metrics-port exposed, or use a backend proxy
+import { OpenFeature } from "@openfeature/web-sdk";
+import { FlagdWebProvider } from "@openfeature/flagd-web-provider";
+
+await OpenFeature.setProviderAndWait(
+  new FlagdWebProvider({ host: "flagd-proxy.internal", port: 8013, tls: true })
+);
+const client = OpenFeature.getClient();
+const enabled = client.getBooleanValue("new-checkout-engine", false);
+```
+
+> **⚠️ NOTE FOR FRONTEND:** flagd's gRPC endpoint is not directly browser-accessible. Run flagd behind an Envoy or grpc-web proxy, or use the OpenFeature REST evaluation API (`--metrics-port`) for browser clients. Never expose an internal flagd instance directly to the public internet.
+
+---
+
+### 9.3 Choosing Between Flipt, flagd, and SaaS
+
+| Criterion | Flipt | flagd | SaaS (LaunchDarkly, etc.) |
+|---|---|---|---|
+| **Setup complexity** | Low (single binary) | Medium (needs a sync source + optional operator) | Low (cloud-managed) |
+| **UI / management console** | ✅ Built-in web UI | ❌ None — manage flag files directly | ✅ Full-featured |
+| **OpenFeature compliance** | ✅ Full provider support | ✅ Reference implementation | ✅ Varies by vendor |
+| **GitOps / flags as code** | ✅ Native Git storage | ✅ File/CRD sync | ⚠️ Varies |
+| **Kubernetes-native** | ✅ Helm chart available | ✅ OpenFeature Operator (sidecar injection) | ⚠️ External dependency |
+| **Experimentation / A/B** | ❌ Separate tooling needed | ❌ Separate tooling needed | ✅ Often built-in |
+| **Audit log** | ✅ Via Git history | ✅ Via Git/CRD history | ✅ Built-in |
+| **Cost** | Free (GPL-3.0) | Free (Apache-2.0) | Per-seat / usage-based |
+| **Best for** | Teams wanting a full flag platform, self-hosted, with a UI | Cloud-native / K8s shops wanting maximum portability and no vendor coupling | Teams prioritizing experimentation, analytics, and managed ops |
+
+
+## 10. Operational & Security Guidance
+
+### 10.1 Environment Promotion Strategy
 
 Flags must exist in all environments but with independent states. Never copy a production flag state directly — let each environment progress independently.
 
@@ -481,7 +729,7 @@ Flags must exist in all environments but with independent states. Never copy a p
 | **Pre-prod / Canary** | Progressive rollout validation. Enable for 5–10% of traffic. |
 | **Production** | Flags start at 0%. Increment through ring policy. Monitor SLOs at each step. |
 
-### 9.2 Security Considerations
+### 10.2 Security Considerations
 
 - Never include SDK server keys in client-side code, mobile apps, or public repos
 - Rotate SDK keys on a regular cadence (quarterly) and immediately after team departures
@@ -489,7 +737,7 @@ Flags must exist in all environments but with independent states. Never copy a p
 - Treat flag state as sensitive config — apply the same access controls as secrets
 - Audit flag changes: integrate flag change webhooks with your SIEM or security tooling
 
-### 9.3 Performance Budgets
+### 10.3 Performance Budgets
 
 Flag evaluation overhead must be negligible. Establish and enforce these limits:
 
@@ -501,7 +749,7 @@ Flag evaluation overhead must be negligible. Establish and enforce these limits:
 | Polling interval (if not streaming) | 30–60 seconds minimum |
 | Max flags per service | < 50 active at any time (enforce via tooling) |
 
-### 9.4 Incident Response with Flags
+### 10.4 Incident Response with Flags
 
 Feature flags are a first-class incident mitigation tool. For every high-risk feature:
 
@@ -513,9 +761,9 @@ Feature flags are a first-class incident mitigation tool. For every high-risk fe
 
 ---
 
-## 10. Governance & Team Standards
+## 11. Governance & Team Standards
 
-### 10.1 Flag Registry Requirements
+### 11.1 Flag Registry Requirements
 
 Every flag must be registered in the team's flag registry (JIRA, Notion, or the flag service's built-in metadata) with:
 
@@ -525,7 +773,7 @@ Every flag must be registered in the team's flag registry (JIRA, Notion, or the 
 - Linked deployment/feature ticket and cleanup ticket
 - Safe default value rationale
 
-### 10.2 Code Review Checklist for Flag PRs
+### 11.2 Code Review Checklist for Flag PRs
 
 Reviewers must verify the following before approving any PR that adds or modifies a flag:
 
@@ -536,7 +784,7 @@ Reviewers must verify the following before approving any PR that adds or modifie
 - [ ] Flag metadata is updated in the registry
 - [ ] Cleanup ticket is linked in the PR description
 
-### 10.3 Automated Governance
+### 11.3 Automated Governance
 
 - **Static analysis:** detect flags older than 60 days with no cleanup ticket (CI check)
 - **Dashboards:** weekly digest of stale flags (no evaluations in 30 days) to flag owners
@@ -545,9 +793,9 @@ Reviewers must verify the following before approving any PR that adds or modifie
 
 ---
 
-## 11. Quick Reference
+## 12. Quick Reference
 
-### 11.1 Platform SDK & Library Summary
+### 12.1 Platform SDK & Library Summary
 
 | Platform | Recommended SDK / Library |
 |---|---|
@@ -556,9 +804,11 @@ Reviewers must verify the following before approving any PR that adds or modifie
 | **Python (Server)** | OpenFeature Python · LaunchDarkly Python · Flagsmith Python |
 | **Angular (Client)** | LaunchDarkly Angular SDK · OpenFeature Web + Angular · Custom proxy service |
 | **React (Client)** | LaunchDarkly React SDK · OpenFeature Web React · Custom Context hook |
+| **Flipt (Self-hosted)** | flipt.io — single binary, Git-native, OpenFeature provider for all languages |
+| **flagd (Self-hosted)** | flagd.dev — OpenFeature reference daemon, K8s sidecar, file/HTTP/CRD sync |
 | **All (Vendor-neutral)** | OpenFeature spec (openfeature.dev) — evaluate first for new projects |
 
-### 11.2 Decision Tree — Which Flag Type?
+### 12.2 Decision Tree — Which Flag Type?
 
 ```
 Is the feature incomplete but deployed?        → Release Flag        (short-lived)
@@ -569,3 +819,7 @@ Is this switching between implementations?    → Infrastructure Flag (short-liv
 ```
 
 > **🏆 GOLDEN RULE:** If you cannot answer *"When does this flag get removed?"* at creation time, do not create the flag until you can. Flags without a defined lifecycle are technical debt on day one.
+
+---
+
+*This document is maintained by the Staff Architecture team. Submit revisions via the architecture-docs repository.*
